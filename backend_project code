@@ -1,0 +1,203 @@
+index.js___
+
+const exprees = require("express");
+const { oneDoctorBypassword, oneDoctorByBearerToken, oneDoctorById, addUuid, fetchSessions, bookSessions } = require('./db.js');
+const app = exprees();
+const crypto = require('crypto');
+
+
+app.use(exprees.json());
+
+
+app.get('/', (req, res) => {
+    res.send('hihihi')
+});
+
+app.get('/login', (req, res) => {
+    res.send("hi there") 
+})
+app.post('/login', async (req, res) => {
+    const password = await req.body.password;
+    const id = await req.body.id;
+    const uuid = crypto.randomUUID();
+    let doctor = await oneDoctorBypassword(password, id);
+    if (doctor.length) {
+        await addUuid(id, uuid);
+    }
+    if (doctor.length) {
+        res.send({ "bearer token": uuid });
+    } else {
+        res.send('invalid deteils please try again');
+    }
+
+});
+
+app.get("/sessions", async (req, res) => {
+    let bearerToken = req.headers.authorization;
+    if (bearerToken) {
+        bearerToken = bearerToken.split(" ")[1];
+        let doctor = await oneDoctorByBearerToken(bearerToken);
+        let allDoctor;
+        if (doctor.length) {
+            allDoctor = await fetchSessions(bearerToken);
+        }
+        if (doctor.length) {
+            res.send(allDoctor);
+        } else {
+            res.send("invalid deteils please try again");
+        }
+    } else {
+        res.send("Bearer send token please")
+    }
+
+})
+
+app.post("/sessions", async (req, res) => {
+    const { id, booking } = req.body;
+    let bearerToken = req.headers.authorization;
+    if (bearerToken) {
+        bearerToken = bearerToken.split(" ")[1];
+        let userDoctor = await oneDoctorByBearerToken(bearerToken);
+        if (userDoctor.length) {
+            let sessionDoctor = await oneDoctorById(id);
+            if (sessionDoctor.length) {
+                if (sessionDoctor[0].free.includes(booking)) {
+                    bookSessions(id, booking);
+                    res.send(`your time is ${req.body.booking}`);
+                } else {
+                    res.send("invalid doctor");
+                }
+            } else {
+                res.send("This doctor don't have that time");
+            }
+
+        } else {
+            res.send("invalid bearer token");
+        }
+    } else {
+        res.send("Please send bearer token");
+    }
+})
+
+app.listen(8000, () => {
+    console.log('app started');
+});
+
+
+
+db.js_____
+
+const { getData } = require('./mongo');
+const main = async () => {
+  let data = await getData();
+  data = await data.find().toArray();
+  return data
+}
+const oneDoctorBypassword = async (password, id) => {
+  let data = await getData();
+  let oneDoctorInfo = await data.find({ password: password }).toArray();
+  if(oneDoctorInfo.length){
+    if(oneDoctorInfo[0].id !== id) return []
+    else return oneDoctorInfo;
+  }else return [];
+}
+
+
+const oneDoctorByBearerToken = async (bearerToken) => {
+  let data = await getData();
+  let oneDoctorInfo = await data.find({ "bearer token": bearerToken }).toArray();
+  return oneDoctorInfo;
+}
+
+const oneDoctorById = async (id) => {
+  let data = await getData();
+  let oneDoctorInfo = await data.find({ id: id }).toArray();
+
+  return oneDoctorInfo
+}
+
+
+const addUuid = async (id, uuid) => {
+  try {
+    const insertData = async () => {
+      let data = await getData();
+      let added = await data.updateOne(
+        { id: id },
+        { $set: { "bearer token": uuid } }
+      )
+      if (added.acknowledged) {
+        console.warn("data is inserted")
+      }
+    }
+    insertData();
+
+  } catch (err) {
+    console.error('Error:', err);
+  }
+}
+
+const fetchSessions = async function (bearerToken) {
+  try {
+    const data = await main();
+    const availableDoctor = () => {
+      let docArr = [];
+      for (let i = 0; i < data.length; i++) {
+        if (data[i]['bearer token'] !== bearerToken) {
+          if(data[i].free.length){
+            docArr.push({
+              "id": data[i].id,
+              "name": data[i].name,
+              "available": data[i].free
+            })
+          } 
+        }
+      }
+      return docArr;
+    }
+
+    return availableDoctor();
+  } catch (err) {
+    console.error('Error:', err);
+  }
+}
+
+const bookSessions = async (id, booking) => {
+  try {
+    const addData = async () => {
+      let data = await getData();
+      let added = await data.updateOne(
+        { id: id },
+        {$pull: {free: booking}, $push: { "booked": booking } }
+      )
+      if (added.acknowledged) {
+        console.warn("booking done")
+      }
+    }
+    addData();
+
+  } catch (err) {
+    console.error('Error:', err);
+  }
+}
+
+module.exports = { 
+  oneDoctorBypassword, 
+  oneDoctorByBearerToken, 
+  addUuid, fetchSessions, 
+  bookSessions,
+  oneDoctorById
+}
+
+mongo.js___
+
+const { MongoClient } = require('mongodb');
+const uri = 'mongodb://localhost:27017';
+const client = new MongoClient(uri);
+
+const getData = async () =>{
+    let result = await client.connect();
+    let db = result.db('dortors');
+    return db.collection('doctor');
+  }
+
+  module.exports = {getData};
